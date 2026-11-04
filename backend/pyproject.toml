@@ -50,3 +50,11 @@ files = ["pitchquery", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+
+[tool.ruff.lint.per-file-ignores]
+# The error table is one case per line on purpose.
+"tests/lang/test_parser.py" = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+# ast._span() returns a dataclasses.field(); safe as a dataclass default (RUF009).
+extend-immutable-calls = ["pitchquery.lang.ast._span"]
