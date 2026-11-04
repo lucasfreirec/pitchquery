@@ -1,5 +1,5 @@
 # Downloaded and generated data — rebuilt with `make data`
-data/
+/data/
 
 # Python
 .venv/
