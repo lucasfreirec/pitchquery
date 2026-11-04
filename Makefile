@@ -1,12 +1,19 @@
-.PHONY: setup test test-backend test-frontend lint lint-backend lint-frontend format dev
+.PHONY: setup data test test-backend test-frontend lint lint-backend lint-frontend format dev
 
 BACKEND := uv run --directory backend
 FRONTEND := npm --prefix frontend
+
+# StatsBomb competition and season; default is the FIFA World Cup 2022.
+COMPETITION ?= 43
+SEASON ?= 106
 
 setup:
 	uv sync --directory backend
 	$(FRONTEND) ci
 	$(BACKEND) pre-commit install
+
+data:
+	$(BACKEND) python -m pitchquery.data.build --competition $(COMPETITION) --season $(SEASON)
 
 test: test-backend test-frontend
 
