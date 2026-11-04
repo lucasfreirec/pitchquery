@@ -21,8 +21,19 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
           uv run mypy
+      # Raw StatsBomb JSON never changes for a finished competition, so cache it
+      # instead of downloading ~200 MB on every run.
+      - name: Cache raw StatsBomb data
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: statsbomb-raw-43-106-v1
+      - name: Build dataset
+        run: uv run python -m pitchquery.data.build
       - name: Test
         run: uv run pytest
+        env:
+          PITCHQUERY_REQUIRE_DATA: "1"
 
   frontend:
     runs-on: ubuntu-latest
