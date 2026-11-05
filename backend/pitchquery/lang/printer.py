@@ -95,6 +95,11 @@ def _literal(literal: Literal) -> str:
             return repr(value)
 
 
+def stage_to_source(stage: Stage) -> str:
+    """One stage as source, e.g. `count by player`. Used in analyzer messages."""
+    return _stage(stage)
+
+
 def _stage(stage: Stage) -> str:
     match stage:
         case CountStage(by):
