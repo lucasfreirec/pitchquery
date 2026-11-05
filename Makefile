@@ -1,4 +1,4 @@
-.PHONY: setup data bench test test-backend test-frontend lint lint-backend lint-frontend format dev
+.PHONY: setup data bench test test-backend test-frontend lint lint-backend lint-frontend format dev dev-backend dev-frontend
 
 BACKEND := uv run --directory backend
 FRONTEND := npm --prefix frontend
@@ -42,5 +42,12 @@ format:
 	$(BACKEND) ruff format .
 	$(FRONTEND) run format
 
+# API on :8000 and the Vite dev server on :5173, together. Ctrl-C stops both.
 dev:
+	$(MAKE) -j2 dev-backend dev-frontend
+
+dev-backend:
+	$(BACKEND) uvicorn pitchquery.api:app --reload --port 8000
+
+dev-frontend:
 	$(FRONTEND) run dev
