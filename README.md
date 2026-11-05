@@ -29,7 +29,8 @@ docker compose up
 ```
 
 Open **http://localhost:8080**. The first start downloads the World Cup data from
-StatsBomb's GitHub and builds the dataset (about two minutes); later starts are instant.
+StatsBomb's GitHub and builds the dataset (a few minutes, depending on your connection);
+later starts are instant.
 The API and its interactive docs are on http://localhost:8000/docs.
 
 Ports taken? `PITCHQUERY_PORT=9080 PITCHQUERY_API_PORT=9000 docker compose up`.

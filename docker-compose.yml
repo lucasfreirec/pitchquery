@@ -2,7 +2,7 @@
 # Ports busy? PITCHQUERY_PORT=9080 PITCHQUERY_API_PORT=9000 docker compose up
 #
 # The first start downloads and builds the dataset into the `pitchquery-data` volume
-# (a minute or two); later starts reuse it.
+# (a few minutes, depending on the connection); later starts reuse it.
 services:
   backend:
     build: ./backend
