@@ -323,3 +323,56 @@ each cost 1, so `shtos` → `shots` is one edit. Case and accents are ignored.
 Ranking is by distance, then by candidate order: values are passed most frequent first,
 so the common answer wins ties. If nothing is close enough, candidates containing the
 input are suggested instead (`Lewandow` → `Robert Lewandowski`).
+
+---
+
+## 6. Execution (compiler and engine)
+
+`compiler.py` turns an analyzed query into one DuckDB SQL statement; `engine.py` runs it
+on an in-memory copy of `events.parquet`.
+
+### Safety
+
+- **Values are always parameters** (`$1`, `$2`, …), never part of the SQL text. A value
+  like `"'; DROP TABLE events; --"` is just a string that matches nothing.
+- **Column names come from the schema**, not from the query text. Field names are only
+  used to look fields up; anything unknown raises `CompileError`.
+- `contains` uses DuckDB's `contains()`, not `LIKE`, so `%` and `_` are literal.
+- Each query runs with a **timeout** (5 s) and returns at most **5,000 rows**; the result
+  says whether rows were cut (`truncated`).
+
+### Semantics
+
+| Rule | Example |
+|------|---------|
+| String comparisons (`=`, `!=`, `in`, `contains`) ignore case. | `team = "france"` matches `France` |
+| A predicate on a missing value is **false**. | `events where xg <= 0.3` only returns shots |
+| `!=` is exactly `not =`, so it **includes** missing values. | `player != "Lionel Messi"` includes events with no player |
+| `not` negates a predicate, missing values included. | `events where not xg > 0.3` includes every non-shot |
+| `between a and b` is inclusive. | `minute between 80 and 90` includes 80 and 90 |
+
+### Row order and stages
+
+Without stages, rows come in **event order** (match, then event index) with every schema
+field as a column.
+
+| Stage | Result |
+|-------|--------|
+| `count` | one row, column `count` |
+| `count by f` | columns `f`, `count`; most frequent first, ties by `f` ascending |
+| `sort asc\|desc f` | sorted by `f`; missing values last in both directions; stable |
+| `sort asc\|desc` | by `count` if the rows have one, otherwise by the current order (`sort desc` = latest events first) |
+| `limit n` | the first `n` rows in the current order |
+| `select f, …` | only these columns, in this order (duplicates dropped) |
+
+Stages apply left to right: `limit 2 | sort asc xg` sorts the two kept rows, while
+`sort asc xg | limit 2` keeps the two lowest.
+
+Implementation note: every stage is a subquery around the previous one. SQL does not
+promise that a subquery's `ORDER BY` survives the outer query, so the compiler carries the
+order in a hidden `_ord` column (`row_number()`), and only the final query sorts by it.
+
+### Performance
+
+See [performance.md](performance.md) (`make bench`). Every example query runs end to end
+in under 10 ms on the full World Cup dataset.
