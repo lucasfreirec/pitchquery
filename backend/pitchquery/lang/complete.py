@@ -252,7 +252,10 @@ class _Builder:
             if token_kind is K.LPAREN and K.IDENT in self.expected:
                 continue
             if token_kind in self.expected and self._matches(label):
-                self._add(label, SuggestionKind.OPERATOR)
+                self._add(label, SuggestionKind.OPERATOR, _PUNCTUATION_DETAIL.get(label))
+
+
+_PUNCTUATION_DETAIL = {"|": "then count, sort, limit or select"}
 
 
 def _rank_values(partial: str, entries: list[ValueCount]) -> list[ValueCount]:
