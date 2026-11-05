@@ -376,3 +376,61 @@ order in a hidden `_ord` column (`row_number()`), and only the final query sorts
 
 See [performance.md](performance.md) (`make bench`). Every example query runs end to end
 in under 10 ms on the full World Cup dataset.
+
+---
+
+## 7. Autocompletion
+
+`complete(source, cursor, values)` in `complete.py` returns suggestions for a cursor
+position, each with a `label` to insert, a `kind` (entity, field, operator, value,
+keyword), the `span` it replaces, and an optional `detail` for the UI.
+
+### Approach: parser-driven
+
+Completion must work on **incomplete** input, which is the normal case while typing. Two
+common options:
+
+1. A separate state machine over the token stream that knows "what can come next".
+   Simple, but it duplicates the grammar, and the two drift apart.
+2. **Ask the real parser.** This is what PitchQuery does.
+
+Every token test in the parser goes through one method, `_check(*kinds)`. When the
+current token is the end of input, `_check` records the kinds it was asked about. To
+complete at the cursor:
+
+1. Take the text before the cursor, minus the word being typed (`shots wh‸` → `shots `).
+2. Parse it with `parse_prefix`. The parser stops at the end of input, complete query or
+   not, and reports every token kind it looked for there: exactly what the grammar allows
+   next. If it fails *before* the end, nothing typed at the cursor can fix the query, so
+   there are no suggestions.
+3. Turn kinds into suggestions, using the parser's context at that point (the entity, the
+   field of the predicate being parsed, the stages so far), and keep those starting with
+   the word being typed.
+
+Because the grammar lives only in the parser, a grammar change updates completion for
+free, and completion can never suggest something the parser rejects.
+
+### What is suggested
+
+| Position | Suggestions |
+|----------|-------------|
+| start of input | entities |
+| after the entity | `where`, `\|` |
+| field position (`where`, `and`, `or`, `not`, `(`, `by`, `select`, `sort … `) | fields the entity has, or only the columns left by `count` / `select` |
+| after a field | operators valid for its type (`team` → `=` `!=` `in` `contains`) |
+| value position of a string field | known values, quoted; see ranking below |
+| value position of a boolean field | `true`, `false` |
+| number positions, `contains`, `limit` | nothing (no useful list) |
+| after a complete predicate | `and`, `or`, and `\|` or `)` as allowed |
+| after `\|` | `count`, `sort`, `limit`, `select` |
+
+**Value ranking**, ignoring case and accents: values starting with the typed text first,
+then values with a *word* starting with it (`mes` → `Lionel Messi`), then values
+containing it; most frequent first within each group.
+
+**Replacement span:** the word around the cursor, or, inside a string, the whole string
+literal including an auto-closed quote, so accepting `"France"` over `"Fr‸"` gives
+`"France"`, not `"France""`.
+
+Completion takes well under 1 ms per call on the full dataset (target: 20 ms per
+keystroke); see [performance.md](performance.md).
