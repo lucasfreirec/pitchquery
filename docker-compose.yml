@@ -1,0 +1,29 @@
+# docker compose up  ->  app on http://localhost:8080, API docs on http://localhost:8000/docs
+# Ports busy? PITCHQUERY_PORT=9080 PITCHQUERY_API_PORT=9000 docker compose up
+#
+# The first start downloads and builds the dataset into the `pitchquery-data` volume
+# (a minute or two); later starts reuse it.
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "${PITCHQUERY_API_PORT:-8000}:8000"
+    volumes:
+      - pitchquery-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 300s # room for the first data build
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${PITCHQUERY_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pitchquery-data:

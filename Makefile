@@ -1,4 +1,4 @@
-.PHONY: setup data bench test test-backend test-frontend lint lint-backend lint-frontend format dev dev-backend dev-frontend
+.PHONY: setup data bench test test-backend test-frontend lint lint-backend lint-frontend format dev dev-backend dev-frontend up down
 
 BACKEND := uv run --directory backend
 FRONTEND := npm --prefix frontend
@@ -51,3 +51,10 @@ dev-backend:
 
 dev-frontend:
 	$(FRONTEND) run dev
+
+# Everything in Docker: app on http://localhost:8080 (first start builds the data).
+up:
+	docker compose up --build
+
+down:
+	docker compose down
