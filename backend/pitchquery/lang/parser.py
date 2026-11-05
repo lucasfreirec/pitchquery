@@ -41,6 +41,7 @@ from pitchquery.lang.ast import (
 )
 from pitchquery.lang.errors import ParseError
 from pitchquery.lang.lexer import tokenize
+from pitchquery.lang.suggest import did_you_mean, suggest
 from pitchquery.lang.tokens import Token, TokenKind, describe
 
 _COMPARISON_OPS: dict[TokenKind, CmpOp] = {
@@ -86,10 +87,19 @@ class _Parser:
             self.pos += 1
         return token
 
-    def _error(self, expected: str) -> ParseError:
-        """`Expected <expected>, got <current token>.`, pointing at the current token."""
+    def _error(self, expected: str, keywords: tuple[str, ...] = ()) -> ParseError:
+        """`Expected <expected>, got <current token>.`, pointing at the current token.
+
+        If the current token is an identifier close to one of the `keywords` that would
+        be valid here (`wher` for `where`), the error suggests it.
+        """
         token = self._peek()
-        return ParseError(f"Expected {expected}, got {describe(token)}.", token.span)
+        message = f"Expected {expected}, got {describe(token)}."
+        suggestions: list[str] = []
+        if keywords and token.kind is TokenKind.IDENT:
+            suggestions = suggest(token.text, keywords)
+            message += did_you_mean(suggestions)
+        return ParseError(message, token.span, tuple(suggestions))
 
     def _after_previous(self) -> str:
         """`after `>``: names the last consumed token, for context in error messages."""
@@ -105,16 +115,19 @@ class _Parser:
             self._advance()
             where = self._or_expr()
             if not self._check(TokenKind.PIPE, TokenKind.EOF):
-                raise self._error("`and`, `or`, `|` or end of query")
+                raise self._error("`and`, `or`, `|` or end of query", ("and", "or"))
         elif not self._check(TokenKind.PIPE, TokenKind.EOF):
-            raise self._error("`where`, `|` or end of query")
+            raise self._error("`where`, `|` or end of query", ("where",))
 
         stages: list[Stage] = []
         while self._check(TokenKind.PIPE):
             self._advance()
-            stages.append(self._stage())
+            stage = self._stage()
+            stages.append(stage)
             if not self._check(TokenKind.PIPE, TokenKind.EOF):
-                raise self._error("`|` or end of query")
+                # `count` is the only stage with an optional keyword after it.
+                keywords = ("by",) if isinstance(stage, CountStage) and stage.by is None else ()
+                raise self._error("`|` or end of query", keywords)
 
         # From the entity to the last real token, so surrounding whitespace is excluded.
         span = entity.span.to(self._previous().span)
@@ -126,9 +139,9 @@ class _Parser:
             raise self._error(f"an entity ({_ENTITY_LIST})")
         name = token.text.lower()
         if name not in ENTITIES:
-            raise ParseError(
-                f"Unknown entity `{token.text}`. Expected one of: {_ENTITY_LIST}.", token.span
-            )
+            suggestions = tuple(suggest(token.text, ENTITIES))
+            hint = did_you_mean(suggestions) or f" Expected one of: {_ENTITY_LIST}."
+            raise ParseError(f"Unknown entity `{token.text}`.{hint}", token.span, suggestions)
         self._advance()
         return Entity(name, span=token.span)
 
@@ -207,12 +220,12 @@ class _Parser:
             # This `and` belongs to `between`. Because we consume it here, _and_expr never
             # sees it, which is what resolves the ambiguity with the boolean `and`.
             if not self._check(TokenKind.AND):
-                raise self._error("`and` to complete `between`")
+                raise self._error("`and` to complete `between`", ("and",))
             self._advance()
             high = self._number("a number after `and`")
             return Between(field, low, high, span=field.span.to(high.span))
 
-        raise self._error(f"an operator {self._after_previous()}")
+        raise self._error(f"an operator {self._after_previous()}", ("in", "contains", "between"))
 
     def _in_list(self, field: Field) -> InList:
         # "in" "(" value { "," value } ")"
@@ -268,7 +281,9 @@ class _Parser:
             return self._limit_stage()
         if keyword.kind is TokenKind.SELECT:
             return self._select_stage()
-        raise self._error("a stage (count, sort, limit, select) after `|`")
+        raise self._error(
+            "a stage (count, sort, limit, select) after `|`", ("count", "sort", "limit", "select")
+        )
 
     def _count_stage(self) -> CountStage:
         # "count" [ "by" field ]
@@ -283,7 +298,7 @@ class _Parser:
         # "sort" ( "asc" | "desc" ) [ field ]
         keyword = self._advance()
         if not self._check(TokenKind.ASC, TokenKind.DESC):
-            raise self._error("`asc` or `desc` after `sort`")
+            raise self._error("`asc` or `desc` after `sort`", ("asc", "desc"))
         direction_token = self._advance()
         direction = (
             SortDirection.ASC if direction_token.kind is TokenKind.ASC else SortDirection.DESC

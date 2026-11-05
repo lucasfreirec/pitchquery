@@ -383,7 +383,8 @@ ENTITY_LIST = "events, shots, passes, dribbles, carries, pressures"
         ("", f"Expected an entity ({ENTITY_LIST}), got end of query.", (0, 0)),
         ('"shots"', f'Expected an entity ({ENTITY_LIST}), got `"shots"`.', (0, 7)),
         ("where", f"Expected an entity ({ENTITY_LIST}), got `where`.", (0, 5)),
-        ("shtos", f"Unknown entity `shtos`. Expected one of: {ENTITY_LIST}.", (0, 5)),
+        ("shtos", "Unknown entity `shtos`. Did you mean `shots`?", (0, 5)),
+        ("goals", f"Unknown entity `goals`. Expected one of: {ENTITY_LIST}.", (0, 5)),
         # After the entity
         ('shots team = "x"', "Expected `where`, `|` or end of query, got `team`.", (6, 10)),
         ("shots shots", "Expected `where`, `|` or end of query, got `shots`.", (6, 11)),
@@ -465,3 +466,31 @@ def test_where_after_stages_is_not_allowed() -> None:
     # `where` only comes right after the entity.
     error = parse_error("shots | limit 5 where xg > 0.3")
     assert error.message == "Expected `|` or end of query, got `where`."
+
+
+# --- Keyword suggestions ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "message", "suggestion"),
+    [
+        ("shtos", "Unknown entity `shtos`. Did you mean `shots`?", "shots"),
+        ("shots wher xg > 0.3", "Expected `where`, `|` or end of query, got `wher`. Did you mean `where`?", "where"),
+        ("shots where a = 1 adn b = 2", "Expected `and`, `or`, `|` or end of query, got `adn`. Did you mean `and`?", "and"),
+        ('shots where type inn ("Shot")', "Expected an operator after `type`, got `inn`. Did you mean `in`?", "in"),
+        ('shots where player contain "x"', "Expected an operator after `player`, got `contain`. Did you mean `contains`?", "contains"),
+        ("shots where m between 1 adn 2", "Expected `and` to complete `between`, got `adn`. Did you mean `and`?", "and"),
+        ("shots | cont by team", "Expected a stage (count, sort, limit, select) after `|`, got `cont`. Did you mean `count`?", "count"),
+        ("shots | sort decs", "Expected `asc` or `desc` after `sort`, got `decs`. Did you mean `desc`?", "desc"),
+        ("shots | count bye team", "Expected `|` or end of query, got `bye`. Did you mean `by`?", "by"),
+    ],
+)  # fmt: skip
+def test_misspelt_keywords_get_a_suggestion(source: str, message: str, suggestion: str) -> None:
+    error = parse_error(source)
+    assert error.message == message
+    assert error.suggestions[0] == suggestion
+
+
+def test_no_suggestion_for_unrelated_words() -> None:
+    error = parse_error('shots team = "x"')
+    assert error.suggestions == ()
