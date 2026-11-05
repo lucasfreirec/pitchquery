@@ -1,4 +1,4 @@
-.PHONY: setup data test test-backend test-frontend lint lint-backend lint-frontend format dev
+.PHONY: setup data bench test test-backend test-frontend lint lint-backend lint-frontend format dev
 
 BACKEND := uv run --directory backend
 FRONTEND := npm --prefix frontend
@@ -14,6 +14,9 @@ setup:
 
 data:
 	$(BACKEND) python -m pitchquery.data.build --competition $(COMPETITION) --season $(SEASON)
+
+bench:
+	$(BACKEND) python benchmarks/bench.py
 
 test: test-backend test-frontend
 

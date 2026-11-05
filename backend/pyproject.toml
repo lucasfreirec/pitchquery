@@ -45,7 +45,7 @@ select = [
 [tool.mypy]
 strict = true
 python_version = "3.12"
-files = ["pitchquery", "tests"]
+files = ["pitchquery", "tests", "benchmarks"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
