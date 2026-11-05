@@ -19,6 +19,7 @@ from pitchquery.data.values import ValueIndex, load_value_index
 from pitchquery.engine import Engine
 from pitchquery.lang.analyzer import check
 from pitchquery.lang.compiler import compile_query
+from pitchquery.lang.complete import complete
 from pitchquery.lang.parser import parse
 
 OUT = Path(__file__).resolve().parents[2] / "docs" / "performance.md"
@@ -32,6 +33,19 @@ QUERIES = [
     "events | count by player | sort desc | limit 10",
     'events where player contains "messi" | sort desc minute | limit 100',
     'shots where player = "Mbape"',  # unknown value: exercises "did you mean" over all players
+]
+
+
+# Completion runs on every keystroke: target < 20 ms. `‸` marks the cursor.
+COMPLETIONS = [
+    "‸",
+    "shots where ‸",
+    "shots where team ‸",
+    "shots where team = ‸",
+    'shots where player = "mes‸',  # ranks ~700 player names
+    'events where player = "a‸',  # matches most players
+    'shots where xg > 0.3 and team = "Argentina" and minute >= 80 ‸',
+    "shots | count by player | sort desc ‸",
 ]
 
 
@@ -53,6 +67,17 @@ def bench_language(values: ValueIndex) -> list[tuple[str, float, float, float]]:
         check_us = median_us(lambda s=source: check(s, values), 100)  # type: ignore[misc]
         compile_us = median_us(lambda q=query: compile_query(q), 500)  # type: ignore[misc]
         rows.append((source, parse_us, check_us, compile_us))
+    return rows
+
+
+def bench_completion(values: ValueIndex) -> list[tuple[str, float, int]]:
+    rows = []
+    for marked in COMPLETIONS:
+        cursor = marked.index("‸")
+        source = marked.replace("‸", "")
+        count = len(complete(source, cursor, values))
+        us = median_us(lambda s=source, c=cursor: complete(s, c, values), 200)  # type: ignore[misc]
+        rows.append((marked, us, count))
     return rows
 
 
@@ -80,6 +105,7 @@ def main() -> None:
     total_events = engine.execute_sql("SELECT count(*) FROM events", ())[1][0][0]
 
     language = bench_language(values)
+    completion = bench_completion(values)
     end_to_end = bench_engine(engine)
     engine.close()
 
@@ -100,6 +126,15 @@ def main() -> None:
         "| Query | parse (µs) | check (µs) | compile (µs) |",
         "|-------|-----------:|-----------:|-------------:|",
         *(f"| {cell(q)} | {p:.0f} | {c:.0f} | {k:.0f} |" for q, p, c, k in language),
+        "",
+        "## Autocompletion",
+        "",
+        "`complete(source, cursor)` on every keystroke. Target: < 20 ms. `‸` is the cursor;"
+        " results are capped at 50.",
+        "",
+        "| Input | time (µs) | suggestions |",
+        "|-------|----------:|------------:|",
+        *(f"| {cell(q)} | {us:.0f} | {n} |" for q, us, n in completion),
         "",
         "## End to end",
         "",
