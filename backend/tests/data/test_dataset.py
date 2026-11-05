@@ -128,3 +128,14 @@ def test_value_index() -> None:
     assert "Lionel Messi" in {entry["value"] for entry in index["player"]}
     counts = [entry["count"] for entry in index["player"]]
     assert counts == sorted(counts, reverse=True)
+
+
+def test_analyzer_suggests_real_values() -> None:
+    from pitchquery.lang.analyzer import check
+
+    index = load_value_index(PATHS.values_json)
+    team = check('shots where team = "Argentna"', index).diagnostics
+    assert team[0].suggestions[0] == "Argentina"
+    player = check('shots where player = "Mbape"', index).diagnostics
+    assert player[0].suggestions[0] == "Kylian Mbappé"
+    assert check('passes where outcome = "complete"', index).diagnostics == ()
