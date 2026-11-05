@@ -149,7 +149,7 @@ Stage = CountStage(by: Field | None)
 Notes:
 
 - Entity names are stored **lowercase** (`SHOTS` → `Entity("shots")`). Field names are
-  stored **as written**; resolving them against the schema is the analyzer's job.
+  stored **as written**; the analyzer resolves them against the schema, ignoring case.
 - Parentheses do not create a node. They only affect the tree shape and the span.
 - **Spans are excluded from equality** (`compare=False`). Two ASTs are equal when they have
   the same structure and values, wherever they came from. The round-trip test relies on
@@ -201,7 +201,7 @@ that is the zero-width `EOF` span.
 | Where                               | Message                                                                 |
 |-------------------------------------|-------------------------------------------------------------------------|
 | start, not an identifier            | ``Expected an entity (events, shots, passes, dribbles, carries, pressures), got <got>.`` |
-| start, unknown identifier           | ``Unknown entity `shtos`. Expected one of: events, shots, passes, dribbles, carries, pressures.`` |
+| start, unknown identifier           | ``Unknown entity `shtos`. Did you mean `shots`?``, or without a close match ``Unknown entity `goals`. Expected one of: events, shots, passes, dribbles, carries, pressures.`` |
 | after the entity                    | ``Expected `where`, `\|` or end of query, got <got>.``                  |
 | start of a primary                  | ``Expected a field name or `(` after <prev>, got <got>.``               |
 | after a field                       | ``Expected an operator after <prev>, got <got>.``                       |
@@ -231,5 +231,95 @@ shots where (xg > 0.3         Expected `)` to close `(` at column 13, got end of
 shots | limit 2.5             Expected a non-negative integer after `limit`, got `2.5`.
 ```
 
-Unknown fields, type mismatches and "did you mean" suggestions are **not** syntax errors.
-They come from the analyzer (M3).
+### Misspelt keywords
+
+When the offending token is an identifier close to a keyword that would be valid at that
+point, the message ends with a suggestion and `ParseError.suggestions` holds it:
+
+```
+shots wher xg > 0.3           Expected `where`, `|` or end of query, got `wher`. Did you mean `where`?
+shots | cont by team          Expected a stage (count, sort, limit, select) after `|`, got `cont`. Did you mean `count`?
+shots where type inn ("Shot") Expected an operator after `type`, got `inn`. Did you mean `in`?
+```
+
+"Close" is defined in section 5 (*Suggestions*).
+
+Unknown fields, type mismatches and unknown values are **not** syntax errors. They come
+from the analyzer.
+
+---
+
+## 5. Semantic checks (analyzer)
+
+`analyzer.check(source, values)` parses the query, then checks it against the schema
+(`schema.py`) and the value index (`data/values.json`). It returns **every** problem,
+in source order, as a `Diagnostic(severity, message, span, suggestions)`. A syntax error
+becomes a single error diagnostic.
+
+- **Errors** mean the query cannot run.
+- **Warnings** mean it runs but probably not as intended (it will return nothing).
+
+### Case
+
+Keywords, entities, field names **and string values** are case-insensitive:
+`Team = "FRANCE"` is the same as `team = "France"`. Accents are significant when
+matching values, but ignored when suggesting them.
+
+### Fields
+
+| Field            | Type    | Only on                     |
+|------------------|---------|-----------------------------|
+| `match_id`       | number  |                             |
+| `competition`, `season`, `team`, `opponent`, `player`, `position`, `type`, `play_pattern` | string | |
+| `minute`, `second`, `period` | number |                   |
+| `x`, `y`         | number  |                             |
+| `end_x`, `end_y` | number  | `shots`, `passes`, `carries`|
+| `outcome`        | string  | `shots`, `passes`, `dribbles` |
+| `xg`             | number  | `shots`                     |
+| `body_part`      | string  | `shots`, `passes`           |
+| `under_pressure` | boolean |                             |
+
+"Only on" comes from the data: these columns are empty for every other event type.
+`events` contains all types, so every field is valid on it.
+
+### Operators by type
+
+| Type    | Operators                                     |
+|---------|-----------------------------------------------|
+| string  | `=` `!=` `in` `contains`                      |
+| number  | `=` `!=` `<` `<=` `>` `>=` `in` `between`     |
+| boolean | `=` `!=`                                      |
+
+An integer field accepts any number (`minute > 80.5`).
+
+### Messages
+
+| Check                         | Severity | Message                                                            | Span |
+|-------------------------------|----------|--------------------------------------------------------------------|------|
+| unknown field                 | error    | ``Unknown field `xgg`. Did you mean `xg`?``                         | field |
+| field not on this entity      | error    | ``` `xg` only exists for `shots`. ```                              | field |
+| operator not valid for type   | error    | ``` `>` does not apply to `team`, which is a string. Use one of: `=`, `!=`, `in`, `contains`. ``` | predicate |
+| value of the wrong type       | error    | ``` `xg` is a number; expected a number, got a string. ```         | value |
+| field gone after a stage      | error    | ``` `xg` is not available after `count by player`. Available: `player`. ``` | field |
+| unknown string value          | warning  | ``No team `Argentna` in the data. Did you mean `Argentina`?``      | value |
+| empty `between` range         | warning  | ``Empty range: the lower bound 90 is greater than the upper bound 80.`` | predicate |
+
+Notes:
+
+- An unknown field stops the checks of its predicate, so `xgg > "high"` gives one error,
+  not two. A field on the wrong entity still has its operator and values checked.
+- Values are checked for `=`, `!=` and `in`, not for `contains` (its argument is part of a
+  value). Fields missing from the value index are not checked.
+- After `count`, only the `count by` field remains; after `select`, only the selected
+  fields. `count` itself is a keyword and cannot be referenced.
+
+### Suggestions
+
+`suggest.py`. A candidate is suggested if it, **or one of its words**, is within
+`max(1, len(word) // 3)` edits of the input, using Damerau–Levenshtein distance (optimal
+string alignment): insertions, deletions, substitutions and swaps of adjacent characters
+each cost 1, so `shtos` → `shots` is one edit. Case and accents are ignored.
+
+Ranking is by distance, then by candidate order: values are passed most frequent first,
+so the common answer wins ties. If nothing is close enough, candidates containing the
+input are suggested instead (`Lewandow` → `Robert Lewandowski`).
