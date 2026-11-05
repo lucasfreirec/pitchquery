@@ -30,6 +30,7 @@ class QueryResult:
     diagnostics: tuple[Diagnostic, ...]
     elapsed_ms: float  # check + compile + execute
     truncated: bool  # True if rows were cut at the row cap
+    timed_out: bool = False  # True if the query was stopped by the timeout
 
     @property
     def ok(self) -> bool:
@@ -76,9 +77,10 @@ class Engine:
             rows: list[tuple[Any, ...]],
             diagnostics: tuple[Diagnostic, ...],
             truncated: bool = False,
+            timed_out: bool = False,
         ) -> QueryResult:
             elapsed_ms = (time.perf_counter() - started) * 1000
-            return QueryResult(columns, rows, diagnostics, elapsed_ms, truncated)
+            return QueryResult(columns, rows, diagnostics, elapsed_ms, truncated, timed_out)
 
         analysis = check(source, self.values)
         if analysis.query is None or not analysis.ok:
@@ -91,7 +93,7 @@ class Engine:
         except QueryTimeout:
             message = f"The query took longer than {self.timeout_s:g} s and was stopped."
             timeout = Diagnostic(Severity.ERROR, message, Span(0, len(source)))
-            return result([], [], (*analysis.diagnostics, timeout))
+            return result([], [], (*analysis.diagnostics, timeout), timed_out=True)
 
         truncated = len(rows) > self.row_cap
         return result(columns, rows[: self.row_cap], analysis.diagnostics, truncated)

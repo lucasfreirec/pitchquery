@@ -5,6 +5,7 @@ Field and entity names are matched case-insensitively.
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
 
 from pitchquery.lang.ast import ENTITIES
 
@@ -21,9 +22,9 @@ class FieldType(Enum):
         return _DESCRIBED[self]
 
     @property
-    def label(self) -> str:
-        """Short name for UIs: "string", "number", "boolean"."""
-        return _DESCRIBED[self].removeprefix("a ")
+    def label(self) -> Literal["string", "number", "boolean"]:
+        """Short name for UIs."""
+        return _LABELS[self]
 
     @property
     def operators(self) -> tuple[str, ...]:
@@ -36,6 +37,13 @@ _DESCRIBED = {
     FieldType.INT: "a number",
     FieldType.FLOAT: "a number",
     FieldType.BOOL: "a boolean",
+}
+
+_LABELS: dict[FieldType, Literal["string", "number", "boolean"]] = {
+    FieldType.STRING: "string",
+    FieldType.INT: "number",
+    FieldType.FLOAT: "number",
+    FieldType.BOOL: "boolean",
 }
 
 _NUMBER_OPS = ("=", "!=", "<", "<=", ">", ">=", "in", "between")

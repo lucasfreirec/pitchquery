@@ -8,10 +8,13 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "duckdb>=2.0.0",
+    "fastapi>=0.162.0",
+    "uvicorn>=0.54.0",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "hypothesis>=6.170.14",
     "mypy>=2.4.1",
     "pre-commit>=4.7.0",
@@ -50,6 +53,11 @@ files = ["pitchquery", "tests", "benchmarks"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+filterwarnings = [
+    # Starlette's TestClient asks for an `httpx2` package; we stay on httpx until that
+    # replacement is confirmed. Only this one warning is silenced.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 
 [tool.ruff.lint.per-file-ignores]
 # The error table is one case per line on purpose.
