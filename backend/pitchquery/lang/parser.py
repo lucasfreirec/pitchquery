@@ -12,7 +12,7 @@ The parser stops at the first error and raises ParseError with the span of the
 offending token.
 """
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from pitchquery.lang.ast import (
     ENTITIES,
@@ -65,10 +65,55 @@ def parse(source: str) -> Query:
     return _Parser(tokenize(source)).query()
 
 
+@dataclass(frozen=True, slots=True)
+class PrefixState:
+    """What the grammar allows right after a (usually incomplete) query prefix."""
+
+    expected: frozenset[TokenKind]  # token kinds the parser looked for at the end
+    entity: str | None
+    field: str | None  # field of the predicate being parsed, if any
+    stages: tuple[Stage, ...]  # stages completed before the end
+
+
+def parse_prefix(source: str) -> PrefixState | None:
+    """Parse `source` as the beginning of a query.
+
+    Returns None if it has an error *before* its end (nothing can fix it by typing more).
+
+    Raises:
+        ParseError: if `source` cannot be tokenized.
+    """
+    parser = _Parser(tokenize(source))
+    try:
+        parser.query()
+    except ParseError:
+        if parser.tokens[parser.pos].kind is not TokenKind.EOF:
+            return None
+    return PrefixState(
+        expected=frozenset(parser.expected_at_end),
+        entity=parser.entity.name if parser.entity else None,
+        field=parser.field.name if parser.field else None,
+        stages=tuple(parser.stages),
+    )
+
+
 class _Parser:
+    """Recursive descent parser over a token list.
+
+    Besides the AST, it records what autocompletion needs (complete.py): every token
+    kind it checked for at the end of the input (`expected_at_end`), and the context at
+    that point: the entity, the field of the predicate being parsed, and the stages
+    parsed so far. Parsing the text before the cursor then tells exactly what can come
+    next, straight from the grammar.
+    """
+
     def __init__(self, tokens: list[Token]) -> None:
         self.tokens = tokens  # always ends with EOF, so peeking never runs off the end
         self.pos = 0
+        self.expected_at_end: set[TokenKind] = set()
+        self.entity: Entity | None = None
+        self.field: Field | None = None
+        self.stages: list[Stage] = []
 
     # --- Token helpers ------------------------------------------------------------------
 
@@ -79,7 +124,11 @@ class _Parser:
         return self.tokens[self.pos - 1]
 
     def _check(self, *kinds: TokenKind) -> bool:
-        return self._peek().kind in kinds
+        """Is the current token one of `kinds`? Every token test goes through here."""
+        token = self._peek()
+        if token.kind is TokenKind.EOF:
+            self.expected_at_end.update(kinds)
+        return token.kind in kinds
 
     def _advance(self) -> Token:
         token = self.tokens[self.pos]
@@ -108,7 +157,7 @@ class _Parser:
     # --- query = entity [ "where" expr ] { "|" stage } EOF ------------------------------
 
     def query(self) -> Query:
-        entity = self._entity()
+        entity = self.entity = self._entity()
 
         where: Expr | None = None
         if self._check(TokenKind.WHERE):
@@ -119,7 +168,7 @@ class _Parser:
         elif not self._check(TokenKind.PIPE, TokenKind.EOF):
             raise self._error("`where`, `|` or end of query", ("where",))
 
-        stages: list[Stage] = []
+        stages = self.stages
         while self._check(TokenKind.PIPE):
             self._advance()
             stage = self._stage()
@@ -135,7 +184,7 @@ class _Parser:
 
     def _entity(self) -> Entity:
         token = self._peek()
-        if token.kind is not TokenKind.IDENT:
+        if not self._check(TokenKind.IDENT):
             raise self._error(f"an entity ({_ENTITY_LIST})")
         name = token.text.lower()
         if name not in ENTITIES:
@@ -193,20 +242,20 @@ class _Parser:
     # --- Predicates: field followed by an operator ---------------------------------------
 
     def _predicate(self) -> Expr:
-        field = self._field()
+        field = self.field = self._field()
         operator = self._peek()
 
-        if operator.kind in _COMPARISON_OPS:
+        if self._check(*_COMPARISON_OPS):
             self._advance()
             value = self._value()
             op = _COMPARISON_OPS[operator.kind]
             return Comparison(field, op, value, span=field.span.to(value.span))
 
-        if operator.kind is TokenKind.IN:
+        if self._check(TokenKind.IN):
             self._advance()
             return self._in_list(field)
 
-        if operator.kind is TokenKind.CONTAINS:
+        if self._check(TokenKind.CONTAINS):
             self._advance()
             if not self._check(TokenKind.STRING):
                 raise self._error("a string after `contains`")
@@ -214,7 +263,7 @@ class _Parser:
             value = StringLit(token.text, span=token.span)
             return Contains(field, value, span=field.span.to(token.span))
 
-        if operator.kind is TokenKind.BETWEEN:
+        if self._check(TokenKind.BETWEEN):
             self._advance()
             low = self._number("a number after `between`")
             # This `and` belongs to `between`. Because we consume it here, _and_expr never
@@ -252,13 +301,13 @@ class _Parser:
     def _value(self) -> Literal:
         # value = string | number | "true" | "false"
         token = self._peek()
-        if token.kind is TokenKind.STRING:
+        if self._check(TokenKind.STRING):
             self._advance()
             return StringLit(token.text, span=token.span)
-        if token.kind is TokenKind.NUMBER:
+        if self._check(TokenKind.NUMBER):
             self._advance()
             return NumberLit(_number_value(token.text), span=token.span)
-        if token.kind in (TokenKind.TRUE, TokenKind.FALSE):
+        if self._check(TokenKind.TRUE, TokenKind.FALSE):
             self._advance()
             return BoolLit(token.kind is TokenKind.TRUE, span=token.span)
         raise self._error(f"a value {self._after_previous()}")
@@ -272,14 +321,13 @@ class _Parser:
     # --- Stages -------------------------------------------------------------------------
 
     def _stage(self) -> Stage:
-        keyword = self._peek()
-        if keyword.kind is TokenKind.COUNT:
+        if self._check(TokenKind.COUNT):
             return self._count_stage()
-        if keyword.kind is TokenKind.SORT:
+        if self._check(TokenKind.SORT):
             return self._sort_stage()
-        if keyword.kind is TokenKind.LIMIT:
+        if self._check(TokenKind.LIMIT):
             return self._limit_stage()
-        if keyword.kind is TokenKind.SELECT:
+        if self._check(TokenKind.SELECT):
             return self._select_stage()
         raise self._error(
             "a stage (count, sort, limit, select) after `|`", ("count", "sort", "limit", "select")
@@ -310,7 +358,7 @@ class _Parser:
         # "limit" integer, where integer is a NUMBER with no sign and no decimal point
         keyword = self._advance()
         token = self._peek()
-        if token.kind is not TokenKind.NUMBER or not token.text.isdigit():
+        if not self._check(TokenKind.NUMBER) or not token.text.isdigit():
             raise self._error("a non-negative integer after `limit`")
         self._advance()
         return LimitStage(int(token.text), span=keyword.span.to(token.span))

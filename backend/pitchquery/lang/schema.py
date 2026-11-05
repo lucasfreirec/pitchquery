@@ -21,6 +21,11 @@ class FieldType(Enum):
         return _DESCRIBED[self]
 
     @property
+    def label(self) -> str:
+        """Short name for UIs: "string", "number", "boolean"."""
+        return _DESCRIBED[self].removeprefix("a ")
+
+    @property
     def operators(self) -> tuple[str, ...]:
         """Operators that apply to this type, in the order messages list them."""
         return _OPERATORS[self]

@@ -66,6 +66,22 @@ def analyze(query: Query, values: ValueIndex | None = None) -> list[Diagnostic]:
     return _Analyzer(query.entity.name, values).run(query)
 
 
+def columns_after(stage: Stage, columns: list[str] | None) -> list[str] | None:
+    """Field names still available after `stage`, given those available before it.
+
+    None means "every schema field". `count` leaves only its `by` field (its own `count`
+    column is a keyword, so it can never be referenced); `select` leaves the selected
+    fields; other stages keep what they had.
+    """
+    match stage:
+        case CountStage(by):
+            return [by.name.lower()] if by else []
+        case SelectStage(fields):
+            return [f.name.lower() for f in fields]
+        case _:
+            return columns
+
+
 def _literal_type(literal: Literal) -> str:
     match literal:
         case StringLit():
@@ -203,8 +219,7 @@ class _Analyzer:
 
     def _stages(self, stages: tuple[Stage, ...]) -> None:
         # Columns left by the last shaping stage (`count` or `select`); None while every
-        # schema field is still available. `count` itself is a keyword, so it can never
-        # be referenced by name and is not listed.
+        # schema field is still available.
         columns: list[str] | None = None
         shaped_by: Stage | None = None
 
@@ -221,12 +236,9 @@ class _Analyzer:
                         message += f" Available: {', '.join(f'`{c}`' for c in columns)}."
                     self._report(Severity.ERROR, message, field.span, suggest(field.name, columns))
 
-            if isinstance(stage, CountStage):
-                columns = [stage.by.name.lower()] if stage.by else []
+            if isinstance(stage, CountStage | SelectStage):
                 shaped_by = stage
-            elif isinstance(stage, SelectStage):
-                columns = [f.name.lower() for f in stage.fields]
-                shaped_by = stage
+            columns = columns_after(stage, columns)
 
 
 def _operator_and_values(predicate: Predicate) -> tuple[str, list[Literal]]:
